@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>欄架跳躍生物力學分析系統 | Hurdle Jump Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background-color: #0b0f19;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
+    }
+    canvas {
+      touch-action: none;
+    }
+    /* 自訂捲軸 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- 頂部導覽列 -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
+          HJ
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight text-white">欄架跳躍生物力學分析器</h1>
+          <p class="text-xs text-slate-400">Hurdle Jump Ground Contact Time &amp; Flight Height Analyzer</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <label class="cursor-pointer bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-sm px-4 py-2 rounded-lg transition flex items-center gap-2 shadow-lg shadow-emerald-500/10">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          匯入跳躍影片
+          <input type="file" id="videoInput" accept="video/*" class="hidden" />
+        </label>
+        <button id="demoBtn" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-sm px-3 py-2 rounded-lg transition">
+          載入模擬測試
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主內容區 -->
+  <main class="max-w-7xl w-full mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
+
+    <!-- 左側：影片畫布與播放控制 (7欄) -->
+    <div class="lg:col-span-7 flex flex-col gap-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+        <!-- 畫布標題列 -->
+        <div class="px-4 py-2.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span>拖曳畫面中的<strong class="text-emerald-400">綠色地面感應線</strong>以對齊跑道表面</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="fpsSelect" class="text-slate-400">影片 FPS：</label>
+            <select id="fpsSelect" class="bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs focus:outline-none">
+              <option value="30">30 FPS</option>
+              <option value="60" selected>60 FPS</option>
+              <option value="120">120 FPS (慢動作)</option>
+              <option value="240">240 FPS (高速攝影)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 影像繪製容器 -->
+        <div class="relative bg-black aspect-video flex items-center justify-center overflow-hidden select-none" id="canvasContainer">
+          <video id="videoEl" class="hidden" playsinline muted></video>
+          <canvas id="mainCanvas" class="w-full h-full object-contain cursor-ns-resize"></canvas>
+
+          <!-- 初始提示遮罩 -->
+          <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-950/80">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 text-slate-600 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <p class="text-slate-300 font-medium mb-1">尚未載入影片</p>
+            <p class="text-xs text-slate-500 max-w-sm">請匯入側拍的欄架跳躍影片（建議側面視角、固定機位），或點擊右上角「載入模擬測試」體驗功能。</p>
+          </div>
+
+          <!-- 掃描進度遮罩 -->
+          <div id="scanOverlay" class="hidden absolute inset-0 bg-slate-950/85 flex flex-col items-center justify-center p-6 z-20">
+            <div class="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+            <p class="text-emerald-400 font-semibold text-sm mb-1">正在進行電腦視覺動態掃描...</p>
+            <p id="scanProgressText" class="text-xs text-slate-400">0%</p>
+          </div>
+        </div>
+
+        <!-- 時間軸與逐幀控制器 -->
+        <div class="p-4 bg-slate-900 space-y-3">
+          <div class="flex items-center gap-3">
+            <span id="currentTimeLabel" class="text-xs font-mono text-slate-400 w-16">0.000s</span>
+            <input type="range" id="seekSlider" min="0" max="100" step="0.001" value="0" class="flex-1 accent-emerald-500 cursor-pointer" />
+            <span id="durationLabel" class="text-xs font-mono text-slate-400 w-16 text-right">0.000s</span>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <!-- 播放與逐幀按鈕 -->
+            <div class="flex items-center gap-1.5">
+              <button id="playPauseBtn" class="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 transition">
+                播放 / 暫停
+              </button>
+              <button id="prevFrameBtn" title="上一幀 (鍵盤左鍵)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-mono border border-slate-700 transition">
+                -1 幀
+              </button>
+              <button id="nextFrameBtn" title="下一幀 (鍵盤右鍵)" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-mono border border-slate-700 transition">
+                +1 幀
+              </button>
+            </div>
+
+            <!-- 播放速度切換 -->
+            <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+              <button data-rate="0.25" class="rate-btn px-2 py-1 rounded text-slate-400 hover:text-white">0.25x</button>
+              <button data-rate="0.5" class="rate-btn px-2 py-1 rounded text-slate-400 hover:text-white">0.5x</button>
+              <button data-rate="1" class="rate-btn px-2 py-1 rounded bg-slate-800 text-emerald-400 font-semibold">1.0x</button>
+            </div>
+
+            <!-- 自動偵測按鈕 -->
+            <button id="autoDetectBtn" class="bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold px-3.5 py-1.5 rounded-lg text-xs transition shadow-lg shadow-sky-500/10">
+              ⚡ 自動偵測觸地與跳躍
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 感應帶動態波形圖 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400">地面感應區像素動態訊號 (Foot Contact Signal)</h2>
+          <span class="text-xs text-slate-500">波峰代表雙腳進入/離開地面感應帶</span>
+        </div>
+        <canvas id="signalCanvas" class="w-full h-24 bg-slate-950 rounded-lg border border-slate-800"></canvas>
+      </div>
+    </div>
+
+    <!-- 右側：關鍵時間點校準與生物力學數據 (5欄) -->
+    <div class="lg:col-span-5 flex flex-col gap-4">
+
+      <!-- 關鍵事件時間點設定卡 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white">1. 關鍵事件時間點（自動偵測 / 手動微調）</h2>
+          <button id="resetEventsBtn" class="text-xs text-slate-400 hover:text-rose-400 transition">清除重設</button>
+        </div>
+        <p class="text-xs text-slate-400">可先執行「自動偵測」，再透過逐幀按鈕微調至鞋底接觸或離開地面的精確畫面並點擊「設為目前幀」。</p>
+
+        <!-- 事件 1：起跳前著地 (Touchdown) -->
+        <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-xs text-amber-400 font-semibold">T1. 觸地瞬間 (Touchdown)</div>
+            <div class="text-xs text-slate-500">起跳前雙腳接觸地面</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="number" id="t1Input" step="0.001" placeholder="0.000" class="w-24 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-right font-mono text-sm text-white focus:border-amber-400 focus:outline-none" />
+            <button data-target="t1" class="set-now-btn bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-2.5 py-1 rounded text-xs transition">
+              設為目前幀
+            </button>
+          </div>
+        </div>
+
+        <!-- 事件 2：離地起跳 (Takeoff) -->
+        <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-xs text-emerald-400 font-semibold">T2. 離地起跳 (Takeoff)</div>
+            <div class="text-xs text-slate-500">鞋尖完全離開地面瞬間</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="number" id="t2Input" step="0.001" placeholder="0.000" class="w-24 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-right font-mono text-sm text-white focus:border-emerald-400 focus:outline-none" />
+            <button data-target="t2" class="set-now-btn bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 px-2.5 py-1 rounded text-xs transition">
+              設為目前幀
+            </button>
+          </div>
+        </div>
+
+        <!-- 事件 3：越欄落地 (Landing) -->
+        <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-xs text-sky-400 font-semibold">T3. 越欄落地 (Landing)</div>
+            <div class="text-xs text-slate-500">跨越欄架後腳部重新觸地</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="number" id="t3Input" step="0.001" placeholder="0.000" class="w-24 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-right font-mono text-sm text-white focus:border-sky-400 focus:outline-none" />
+            <button data-target="t3" class="set-now-btn bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 px-2.5 py-1 rounded text-xs transition">
+              設為目前幀
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 核心分析結果儀表板 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white">2. 自動計算生物力學指標</h2>
+          <button id="saveRecordBtn" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold px-3 py-1 rounded-lg text-xs transition">
+            + 記錄此跳數據
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <!-- 觸地時間 GCT -->
+          <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+            <div class="text-xs text-slate-400 mb-1">觸地時間 (GCT)</div>
+            <div class="flex items-baseline gap-1">
+              <span id="gctValue" class="text-2xl font-bold font-mono text-amber-400">--</span>
+              <span class="text-xs text-slate-500">ms</span>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">公式：T2 - T1</div>
+          </div>
+
+          <!-- 跳躍高度 Jump Height -->
+          <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+            <div class="text-xs text-slate-400 mb-1">質心跳躍高度</div>
+            <div class="flex items-baseline gap-1">
+              <span id="heightValue" class="text-2xl font-bold font-mono text-emerald-400">--</span>
+              <span class="text-xs text-slate-500">cm</span>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">公式：½ g (FT/2)²</div>
+          </div>
+
+          <!-- 騰空時間 Flight Time -->
+          <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+            <div class="text-xs text-slate-400 mb-1">騰空時間 (Flight Time)</div>
+            <div class="flex items-baseline gap-1">
+              <span id="ftValue" class="text-xl font-bold font-mono text-sky-400">--</span>
+              <span class="text-xs text-slate-500">ms</span>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">公式：T3 - T2</div>
+          </div>
+
+          <!-- 反應肌力指數 RSI -->
+          <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+            <div class="text-xs text-slate-400 mb-1">反應肌力指數 (RSI)</div>
+            <div class="flex items-baseline gap-1">
+              <span id="rsiValue" class="text-xl font-bold font-mono text-purple-400">--</span>
+              <span class="text-xs text-slate-500">m/s</span>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">高度(m) ÷ 觸地時間(s)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 多組歷史紀錄表與 CSV 匯出 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex-1 flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold text-white">3. 訓練紀錄列表</h2>
+          <button id="exportCsvBtn" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-2.5 py-1 rounded transition">
+            匯出 CSV
+          </button>
+        </div>
+
+        <div class="overflow-x-auto flex-1">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-2 px-2">#</th>
+                <th class="py-2 px-2">觸地 (ms)</th>
+                <th class="py-2 px-2">騰空 (ms)</th>
+                <th class="py-2 px-2">高度 (cm)</th>
+                <th class="py-2 px-2">RSI</th>
+                <th class="py-2 px-2 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="recordsBody" class="divide-y divide-slate-800/60 font-mono">
+              <tr id="emptyRow">
+                <td colspan="6" class="py-6 text-center text-slate-500 font-sans">尚無儲存紀錄，分析完成後可點擊「記錄此跳數據」</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    // 狀態變數
+    const videoEl = document.getElementById('videoEl');
+    const mainCanvas = document.getElementById('mainCanvas');
+    const ctx = mainCanvas.getContext('2d');
+    const signalCanvas = document.getElementById('signalCanvas');
+    const sCtx = signalCanvas.getContext('2d');
+
+    const seekSlider = document.getElementById('seekSlider');
+    const currentTimeLabel = document.getElementById('currentTimeLabel');
+    const durationLabel = document.getElementById('durationLabel');
+    const fpsSelect = document.getElementById('fpsSelect');
+
+    const t1Input = document.getElementById('t1Input');
+    const t2Input = document.getElementById('t2Input');
+    const t3Input = document.getElementById('t3Input');
+
+    let groundLineRatio = 0.80; // 地面線預設在畫面高度 80% 處
+    let isDraggingLine = false;
+    let isDemoMode = false;
+    let demoTime = 0;
+    let demoDuration = 3.0;
+    let demoPlaying = false;
+    let motionSignal = []; // { time, energy }
+    let records = [];
+
+    // 離屏畫布用於電腦視覺像素比對
+    const offCanvas = document.createElement('canvas');
+    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+    // 初始化畫布解析度
+    function resizeCanvas() {
+      const rect = mainCanvas.getBoundingClientRect();
+      mainCanvas.width = rect.width * window.devicePixelRatio;
+      mainCanvas.height = rect.height * window.devicePixelRatio;
+      renderFrame();
+      drawSignalGraph();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // 匯入本機影片
+    document.getElementById('videoInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      isDemoMode = false;
+      demoPlaying = false;
+      motionSignal = [];
+      document.getElementById('emptyState').classList.add('hidden');
+
+      const url = URL.createObjectURL(file);
+      videoEl.src = url;
+      videoEl.load();
+
+      videoEl.onloadedmetadata = () => {
+        seekSlider.max = videoEl.duration;
+        durationLabel.textContent = videoEl.duration.toFixed(3) + 's';
+        videoEl.currentTime = 0;
+        renderFrame();
+        drawSignalGraph();
+      };
+    });
+
+    // 載入模擬測試動畫（無影片時可直接體驗完整偵測與計算）
+    document.getElementById('demoBtn').addEventListener('click', () => {
+      isDemoMode = true;
+      demoTime = 0;
+      demoDuration = 2.6;
+      demoPlaying = true;
+      groundLineRatio = 0.80;
+      motionSignal = [];
+      document.getElementById('emptyState').classList.add('hidden');
+
+      seekSlider.max = demoDuration;
+      durationLabel.textContent = demoDuration.toFixed(3) + 's';
+      fpsSelect.value = "120";
+      requestAnimationFrame(demoLoop);
+    });
+
+    // 模擬測試物理時間軸 (0 ~ 2.6s)
+    // 0.0~0.5s: 助跑接近 -> 0.50s 觸地(T1) -> 0.50~0.68s 緩衝起跳 -> 0.68s 離地(T2) -> 0.68~1.32s 騰空跨欄(FT=0.64s, H≈50.2cm) -> 1.32s 落地(T3)
+    function getDemoAthleteState(t) {
+      const groundY = mainCanvas.height * groundLineRatio;
+      const startX = mainCanvas.width * 0.15;
+      const endX = mainCanvas.width * 0.85;
+      const x = startX + (endX - startX) * (t / demoDuration);
+
+      let footY = groundY;
+      let kneeBend = 0;
+
+      if (t < 0.50) {
+        // 助跑最後一步落地前
+        const p = t / 0.50;
+        footY = groundY - Math.sin(p * Math.PI) * 55;
+      } else if (t >= 0.50 && t <= 0.68) {
+        // 觸地緩衝與蹬伸 (180ms)
+        footY = groundY;
+        const p = (t - 0.50) / 0.18;
+        kneeBend = Math.sin(p * Math.PI) * 24;
+      } else if (t > 0.68 && t < 1.32) {
+        // 騰空跨越欄架 (640ms)
+        const ft = 0.64;
+        const tau = t - 0.68;
+        // 拋物線公式 y(t) = v0*t - 0.5*g*t^2
+        const g = 980; // 視覺像素重力
+        const v0 = 0.5 * g * ft;
+        const lift = v0 * tau - 0.5 * g * tau * tau;
+        footY = groundY - lift * 2.2;
+      } else if (t >= 1.32 && t <= 1.55) {
+        // 落地緩衝
+        footY = groundY;
+        const p = (t - 1.32) / 0.23;
+        kneeBend = Math.sin(p * Math.PI) * 20;
+      } else {
+        // 落地後跑離
+        const p = ((t - 1.55) % 0.45) / 0.45;
+        footY = groundY - Math.sin(p * Math.PI) * 45;
+      }
+
+      return { x, footY, groundY, kneeBend };
+    }
+
+    let lastTimestamp = 0;
+    function demoLoop(timestamp) {
+      if (!isDemoMode) return;
+      if (!lastTimestamp) lastTimestamp = timestamp;
+      const dt = (timestamp - lastTimestamp) / 1000;
+      lastTimestamp = timestamp;
+
+      if (demoPlaying) {
+        const rate = parseFloat(document.querySelector('.rate-btn.bg-slate-800').dataset.rate);
+        demoTime += dt * rate;
+        if (demoTime >= demoDuration) {
+          demoTime = 0;
+        }
+        seekSlider.value = demoTime;
+        currentTimeLabel.textContent = demoTime.toFixed(3) + 's';
+      }
+
+      renderFrame();
+      drawSignalGraph();
+      if (demoPlaying) {
+        requestAnimationFrame(demoLoop);
+      }
+    }
+
+    // 繪製主畫面與地面感應線
+    function renderFrame() {
+      const w = mainCanvas.width;
+      const h = mainCanvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      if (isDemoMode) {
+        // 繪製跑道背景
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, w, h);
+
+        const state = getDemoAthleteState(demoTime);
+
+        // 繪製跑道地面
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(0, state.groundY, w, h - state.groundY);
+
+        // 繪製欄架 (位於畫面中央)
+        const hurdleX = w * 0.52;
+        const hurdleH = h * 0.24;
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(hurdleX, state.groundY);
+        ctx.lineTo(hurdleX, state.groundY - hurdleH);
+        ctx.lineTo(hurdleX + 18, state.groundY - hurdleH);
+        ctx.stroke();
+
+        // 欄架橫板
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(hurdleX - 4, state.groundY - hurdleH, 24, 8);
+
+        // 繪製運動員火柴人模型
+        const hipY = state.footY - 75 + state.kneeBend;
+        const headY = hipY - 55;
+
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+
+        // 軀幹
+        ctx.beginPath();
+        ctx.moveTo(state.x, headY + 14);
+        ctx.lineTo(state.x - 6, hipY);
+        ctx.stroke();
+
+        // 頭部
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(state.x + 2, headY, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 腿部與腳掌
+        ctx.strokeStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.moveTo(state.x - 6, hipY);
+        ctx.lineTo(state.x + 8 + state.kneeBend * 0.5, (hipY + state.footY) / 2);
+        ctx.lineTo(state.x, state.footY);
+        ctx.stroke();
+
+        // 腳底接觸點標記
+        ctx.fillStyle = state.footY >= state.groundY - 1 ? '#10b981' : '#f43f5e';
+        ctx.beginPath();
+        ctx.arc(state.x, state.footY, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+      } else if (videoEl.readyState >= 2) {
+        // 等比例繪製影片幀
+        const vw = videoEl.videoWidth;
+        const vh = videoEl.videoHeight;
+        const scale = Math.min(w / vw, h / vh);
+        const dw = vw * scale;
+        const dh = vh * scale;
+        const dx = (w - dw) / 2;
+        const dy = (h - dh) / 2;
+        ctx.drawImage(videoEl, dx, dy, dw, dh);
+      }
+
+      // 繪製地面感應帶 (ROI) 與綠色基準線
+      const lineY = h * groundLineRatio;
+      const bandHeight = h * 0.08;
+
+      // 半透明感應區
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.14)';
+      ctx.fillRect(0, lineY - bandHeight, w, bandHeight);
+
+      // 地面基準線
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(0, lineY);
+      ctx.lineTo(w, lineY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 線條標籤
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('GROUND SENSOR LINE (可上下拖曳對齊地面)', 14, lineY - 8);
+    }
+
+    // 影片播放迴圈同步
+    videoEl.addEventListener('timeupdate', () => {
+      if (isDemoMode) return;
+      seekSlider.value = videoEl.currentTime;
+      currentTimeLabel.textContent = videoEl.currentTime.toFixed(3) + 's';
+      renderFrame();
+      drawSignalGraph();
+    });
+
+    // 拖曳地面感應線互動
+    function updateGroundLineFromEvent(clientY) {
+      const rect = mainCanvas.getBoundingClientRect();
+      const ratio = (clientY - rect.top) / rect.height;
+      groundLineRatio = Math.max(0.2, Math.min(0.95, ratio));
+      renderFrame();
+    }
+
+    mainCanvas.addEventListener('pointerdown', (e) => {
+      isDraggingLine = true;
+      updateGroundLineFromEvent(e.clientY);
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!isDraggingLine) return;
+      updateGroundLineFromEvent(e.clientY);
+    });
+    window.addEventListener('pointerup', () => {
+      isDraggingLine = false;
+    });
+
+    // 時間軸滑桿控制
+    seekSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      if (isDemoMode) {
+        demoPlaying = false;
+        demoTime = val;
+        currentTimeLabel.textContent = demoTime.toFixed(3) + 's';
+        renderFrame();
+        drawSignalGraph();
+      } else if (videoEl.readyState >= 2) {
+        videoEl.pause();
+        videoEl.currentTime = val;
+      }
+    });
+
+    // 播放 / 暫停
+    document.getElementById('playPauseBtn').addEventListener('click', () => {
+      if (isDemoMode) {
+        demoPlaying = !demoPlaying;
+        if (demoPlaying) {
+          lastTimestamp = 0;
+          requestAnimationFrame(demoLoop);
+        }
+      } else if (videoEl.readyState >= 2) {
+        if (videoEl.paused) videoEl.play();
+        else videoEl.pause();
+      }
+    });
+
+    // 逐幀前後移動
+    function stepFrame(direction) {
+      const fps = parseInt(fpsSelect.value, 10);
+      const step = 1 / fps;
+      if (isDemoMode) {
+        demoPlaying = false;
+        demoTime = Math.max(0, Math.min(demoDuration, demoTime + direction * step));
+        seekSlider.value = demoTime;
+        currentTimeLabel.textContent = demoTime.toFixed(3) + 's';
+        renderFrame();
+        drawSignalGraph();
+      } else if (videoEl.readyState >= 2) {
+        videoEl.pause();
+        videoEl.currentTime = Math.max(0, Math.min(videoEl.duration, videoEl.currentTime + direction * step));
+      }
+    }
+
+    document.getElementById('prevFrameBtn').addEventListener('click', () => stepFrame(-1));
+    document.getElementById('nextFrameBtn').addEventListener('click', () => stepFrame(1));
+
+    // 鍵盤左右方向鍵逐幀微調
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      if (e.key === 'ArrowLeft') stepFrame(-1);
+      if (e.key === 'ArrowRight') stepFrame(1);
+    });
+
+    // 播放速度切換
+    document.querySelectorAll('.rate-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.rate-btn').forEach(b => {
+          b.classList.remove('bg-slate-800', 'text-emerald-400', 'font-semibold');
+          b.classList.add('text-slate-400');
+        });
+        btn.classList.add('bg-slate-800', 'text-emerald-400', 'font-semibold');
+        btn.classList.remove('text-slate-400');
+
+        const rate = parseFloat(btn.dataset.rate);
+        if (!isDemoMode) {
+          videoEl.playbackRate = rate;
+        }
+      });
+    });
+
+    // 核心演算法：自動掃描影片感應區像素變化，偵測觸地與起跳
+    document.getElementById('autoDetectBtn').addEventListener('click', async () => {
+      if (isDemoMode) {
+        // 模擬模式自動填入精準物理事件並產生訊號波形
+        motionSignal = [];
+        for (let t = 0; t <= demoDuration; t += 0.01) {
+          const st = getDemoAthleteState(t);
+          const distToGround = Math.abs(st.footY - st.groundY);
+          const energy = distToGround < 12 ? (12 - distToGround) * 8 : 2;
+          motionSignal.push({ time: t, energy });
+        }
+        t1Input.value = '0.500';
+        t2Input.value = '0.680';
+        t3Input.value = '1.320';
+        calculateMetrics();
+        drawSignalGraph();
+        return;
+      }
+
+      if (videoEl.readyState < 2) {
+        alert('請先匯入跳躍影片，或點擊「載入模擬測試」。');
+        return;
+      }
+
+      videoEl.pause();
+      const overlay = document.getElementById('scanOverlay');
+      const progressText = document.getElementById('scanProgressText');
+      overlay.classList.remove('hidden');
+
+      const duration = videoEl.duration;
+      const fps = parseInt(fpsSelect.value, 10);
+      const step = 1 / fps;
+
+      // 設定低解析度離屏畫布加快掃描速度
+      const scanW = 160;
+      const scanH = 90;
+      offCanvas.width = scanW;
+      offCanvas.height = scanH;
+
+      const roiBottom = Math.floor(scanH * groundLineRatio);
+      const roiTop = Math.max(0, roiBottom - Math.floor(scanH * 0.12));
+
+      let prevGray = null;
+      motionSignal = [];
+
+      for (let t = 0; t <= duration; t += step) {
+        videoEl.currentTime = t;
+        await new Promise(resolve => {
+          videoEl.onseeked = resolve;
+        });
+
+        offCtx.drawImage(videoEl, 0, 0, scanW, scanH);
+        const imgData = offCtx.getImageData(0, roiTop, scanW, roiBottom - roiTop).data;
+
+        const currGray = new Float32Array(imgData.length / 4);
+        let diffSum = 0;
+
+        for (let i = 0, p = 0; i < imgData.length; i += 4, p++) {
+          const gray = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
+          currGray[p] = gray;
+          if (prevGray) {
+            diffSum += Math.abs(gray - prevGray[p]);
+          }
+        }
+
+        const avgEnergy = prevGray ? diffSum / currGray.length : 0;
+        motionSignal.push({ time: t, energy: avgEnergy });
+        prevGray = currGray;
+
+        progressText.textContent = `${Math.min(100, Math.round((t / duration) * 100))}%`;
+      }
+
+      overlay.classList.add('hidden');
+      analyzeSignalPeaks();
+      drawSignalGraph();
+    });
+
+    // 從動態訊號波峰自動推算 T1 (觸地)、T2 (離地)、T3 (落地)
+    function analyzeSignalPeaks() {
+      if (motionSignal.length < 5) return;
+
+      const energies = motionSignal.map(d => d.energy);
+      const maxEnergy = Math.max(...energies);
+      const threshold = maxEnergy * 0.32;
+
+      // 找出連續高於閾值的區段（代表腳部在地面感應帶內活動）
+      const activeSegments = [];
+      let segStart = null;
+
+      for (let i = 0; i < motionSignal.length; i++) {
+        if (motionSignal[i].energy >= threshold && segStart === null) {
+          segStart = motionSignal[i].time;
+        } else if (motionSignal[i].energy < threshold && segStart !== null) {
+          if (motionSignal[i - 1].time - segStart >= 0.04) {
+            activeSegments.push({ start: segStart, end: motionSignal[i - 1].time });
+          }
+          segStart = null;
+        }
+      }
+
+      if (activeSegments.length >= 2) {
+        // 第一段地面接觸為起跳前的觸地 (T1 -> T2)，第二段為越欄後的落地 (T3)
+        t1Input.value = activeSegments[0].start.toFixed(3);
+        t2Input.value = activeSegments[0].end.toFixed(3);
+        t3Input.value = activeSegments[1].start.toFixed(3);
+      } else if (activeSegments.length === 1) {
+        t1Input.value = activeSegments[0].start.toFixed(3);
+        t2Input.value = activeSegments[0].end.toFixed(3);
+      }
+
+      calculateMetrics();
+    }
+
+    // 繪製地面感應區波形圖
+    function drawSignalGraph() {
+      const rect = signalCanvas.getBoundingClientRect();
+      signalCanvas.width = rect.width * window.devicePixelRatio;
+      signalCanvas.height = rect.height * window.devicePixelRatio;
+
+      const w = signalCanvas.width;
+      const h = signalCanvas.height;
+      sCtx.clearRect(0, 0, w, h);
+
+      if (motionSignal.length === 0) return;
+
+      const maxE = Math.max(...motionSignal.map(d => d.energy), 1);
+      const totalDuration = isDemoMode ? demoDuration : (videoEl.duration || 1);
+
+      // 繪製能量曲線
+      sCtx.strokeStyle = '#38bdf8';
+      sCtx.lineWidth = 2;
+      sCtx.beginPath();
+      motionSignal.forEach((pt, idx) => {
+        const x = (pt.time / totalDuration) * w;
+        const y = h - (pt.energy / maxE) * (h * 0.85) - 4;
+        if (idx === 0) sCtx.moveTo(x, y);
+        else sCtx.lineTo(x, y);
+      });
+      sCtx.stroke();
+
+      // 標示 T1, T2, T3 垂直線
+      const markers = [
+        { val: parseFloat(t1Input.value), color: '#fbbf24' },
+        { val: parseFloat(t2Input.value), color: '#10b981' },
+        { val: parseFloat(t3Input.value), color: '#38bdf8' }
+      ];
+
+      markers.forEach(m => {
+        if (!isNaN(m.val)) {
+          const mx = (m.val / totalDuration) * w;
+          sCtx.strokeStyle = m.color;
+          sCtx.lineWidth = 2;
+          sCtx.beginPath();
+          sCtx.moveTo(mx, 0);
+          sCtx.lineTo(mx, h);
+          sCtx.stroke();
+        }
+      });
+    }
+
+    // 點擊「設為目前幀」按鈕
+    document.querySelectorAll('.set-now-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const currentT = isDemoMode ? demoTime : videoEl.currentTime;
+        const target = btn.dataset.target;
+        if (target === 't1') t1Input.value = currentT.toFixed(3);
+        if (target === 't2') t2Input.value = currentT.toFixed(3);
+        if (target === 't3') t3Input.value = currentT.toFixed(3);
+        calculateMetrics();
+        drawSignalGraph();
+      });
+    });
+
+    // 手動修改時間輸入框時即時重新計算
+    [t1Input, t2Input, t3Input].forEach(inp => {
+      inp.addEventListener('input', () => {
+        calculateMetrics();
+        drawSignalGraph();
+      });
+    });
+
+    // 清除事件
+    document.getElementById('resetEventsBtn').addEventListener('click', () => {
+      t1Input.value = '';
+      t2Input.value = '';
+      t3Input.value = '';
+      calculateMetrics();
+      drawSignalGraph();
+    });
+
+    // 計算觸地時間、跳躍高度與 RSI
+    function calculateMetrics() {
+      const t1 = parseFloat(t1Input.value);
+      const t2 = parseFloat(t2Input.value);
+      const t3 = parseFloat(t3Input.value);
+
+      const gctEl = document.getElementById('gctValue');
+      const heightEl = document.getElementById('heightValue');
+      const ftEl = document.getElementById('ftValue');
+      const rsiEl = document.getElementById('rsiValue');
+
+      let gctSec = null;
+      let ftSec = null;
+      let heightMeters = null;
+
+      // 觸地時間 (T2 - T1)
+      if (!isNaN(t1) && !isNaN(t2) && t2 > t1) {
+        gctSec = t2 - t1;
+        gctEl.textContent = (gctSec * 1000).toFixed(0);
+      } else {
+        gctEl.textContent = '--';
+      }
+
+      // 騰空時間 (T3 - T2) 與跳躍高度 h = 1/8 * g * t^2
+      if (!isNaN(t2) && !isNaN(t3) && t3 > t2) {
+        ftSec = t3 - t2;
+        ftEl.textContent = (ftSec * 1000).toFixed(0);
+        const g = 9.81;
+        heightMeters = (g * ftSec * ftSec) / 8;
+        heightEl.textContent = (heightMeters * 100).toFixed(1);
+      } else {
+        ftEl.textContent = '--';
+        heightEl.textContent = '--';
+      }
+
+      // 反應肌力指數 RSI = Jump Height (m) / GCT (s)
+      if (gctSec && heightMeters) {
+        const rsi = heightMeters / gctSec;
+        rsiEl.textContent = rsi.toFixed(2);
+      } else {
+        rsiEl.textContent = '--';
+      }
+    }
+
+    // 儲存單次跳躍紀錄
+    document.getElementById('saveRecordBtn').addEventListener('click', () => {
+      const gct = document.getElementById('gctValue').textContent;
+      const ft = document.getElementById('ftValue').textContent;
+      const height = document.getElementById('heightValue').textContent;
+      const rsi = document.getElementById('rsiValue').textContent;
+
+      if (gct === '--' && height === '--') {
+        alert('請先完成至少一項時間點設定（T1~T3）再進行紀錄。');
+        return;
+      }
+
+      records.push({ gct, ft, height, rsi });
+      renderRecordsTable();
+    });
+
+    function renderRecordsTable() {
+      const tbody = document.getElementById('recordsBody');
+      if (records.length === 0) {
+        tbody.innerHTML = `<tr id="emptyRow"><td colspan="6" class="py-6 text-center text-slate-500 font-sans">尚無儲存紀錄，分析完成後可點擊「記錄此跳數據」</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = records.map((r, index) => `
+        <tr class="hover:bg-slate-800/40">
+          <td class="py-2 px-2 text-slate-400">#${index + 1}</td>
+          <td class="py-2 px-2 text-amber-400 font-semibold">${r.gct}</td>
+          <td class="py-2 px-2 text-sky-400">${r.ft}</td>
+          <td class="py-2 px-2 text-emerald-400 font-semibold">${r.height}</td>
+          <td class="py-2 px-2 text-purple-400">${r.rsi}</td>
+          <td class="py-2 px-2 text-right">
+            <button onclick="deleteRecord(${index})" class="text-slate-500 hover:text-rose-400">刪除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    window.deleteRecord = function(idx) {
+      records.splice(idx, 1);
+      renderRecordsTable();
+    };
+
+    // 匯出 CSV 報表
+    document.getElementById('exportCsvBtn').addEventListener('click', () => {
+      if (records.length === 0) {
+        alert('目前沒有可匯出的紀錄。');
+        return;
+      }
+      const headers = ['跳躍次序', '觸地時間(ms)', '騰空時間(ms)', '跳躍高度(cm)', '反應肌力指數(RSI)'];
+      const rows = records.map((r, i) => [i + 1, r.gct, r.ft, r.height, r.rsi]);
+      const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.join(',')).join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `hurdle_jump_analysis_${new Date().toISOString().slice(0,10)}.csv`;
+      link.click();
+    });
+  </script>
+</body>
+</html>
